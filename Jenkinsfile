@@ -1,36 +1,121 @@
-docker run --name jenkins-blueocean --rm --detach --network jenkins --env DOCKER_HOST=tcp://docker:2376 --env DOCKER_CERT_PATH=/certs/client --env DOCKER_TLS_VERIFY=1 --volume jenkins-data:/var/jenkins_home --volume jenkins-docker-certs:/certs/client:ro --publish 8080:8080 --publish 50000:50000 myjenkins-blueocean:1.1
+pipeline {
+	agent {
+		docker {
+			image "mcr.microsoft.com/dotnet/sdk:5.0"
+			args "--volume /var/run/docker.sock:/var/run/docker.sock"
+		}
+	}
 
-docker run -u --name jenkins-blueocean --rm ^
-  --network jenkins --env DOCKER_HOST=tcp://docker:2376 ^
-  --env DOCKER_CERT_PATH=/certs/client --env DOCKER_TLS_VERIFY=1 ^
-  --volume jenkins-data:/var/jenkins_home ^
-  --volume jenkins-docker-certs:/certs/client:ro ^
-  --publish 8080:8080 --publish 50000:50000 myjenkins-blueocean:1.1
+	stages {
+
+		stage('Source'){
+					steps{
+						checkout([$class: 'GitSCM', branches: [[name: '*/main']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[url: 'https://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@github.com/SIT-ICT3x03/Team28-AY21.git']]])
+					}
+				}
+
+		stage('Restore packages'){
+           steps{
+			   //sh "export PATH=${PATH}:${HOME}/.dotnet"
+			   sh 'apt update && apt install -y docker.io'
+			   sh 'cd ..'
+			   sh 'ls'
+               sh 'dotnet restore hacmii/hacmii.sln'
+            }
+         }
+
+		stage('Clean'){
+           steps{
+               sh 'dotnet clean hacmii/hacmii.sln --configuration Release'
+            }
+         }
+
+		stage('Build') {
+			environment
+			{
+				//RSA_KEY = credentials('hacmiiKeys')
+				APP_CONFIG_FILE = credentials('App_config')
+				DB_SSH_CREDENTIALS = credentials('ict3x03_db_pem')
+				TWILIO_APIKEY_FILE = credentials('twilio')
+			}
+			steps {
+				//echo 'building the application'
+
+				sh 'cp "${APP_CONFIG_FILE}" ./hacmii'
+				sh 'cp "${DB_SSH_CREDENTIALS}" ./hacmii'
+				sh 'cp "${TWILIO_APIKEY_FILE}" ./hacmii'
+				sh 'dotnet build hacmii/hacmii.sln --configuration Release --no-restore'
+			}
+		}
+
+		stage('Automated Testing')
+		{
+			parallel
+			{
+				stage('Unit and Integration Tests')
+				{
+					steps
+					{
 
 
-docker run --name jenkins-blueocean --rm --detach ^
-  --user root ^
-  --volume /var/run/docker.sock:/var/run/docker.sock ^
-  --volume jenkins-data:/var/jenkins_home ^
-  --volume "%HOMEDRIVE%%HOMEPATH%":/home ^
-  --publish 8080:8080 myjenkins-blueocean:1.1
+						sh 'wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb'
+						sh 'apt -y install ./google-chrome-stable_current_amd64.deb'
 
-docker run --name jenkins-docker --rm --detach ^
-  --privileged --network jenkins --network-alias docker ^
-  --env DOCKER_TLS_CERTDIR=/certs ^
-  --volume jenkins-docker-certs:/certs/client ^
-  --volume jenkins-data:/var/jenkins_home ^
-  docker:dind
+						sh 'dotnet add hacmii.UnitTests/hacmii.UnitTests.csproj package NunitXml.TestLogger --version 3.0.117'
+						sh 'dotnet test hacmii/hacmii.sln --logger:"nunit;logFileName=TestResult.xml"'
+						sh 'ls hacmii.UnitTests'
+					}
+				}
 
-docker run --name jenkins-blueocean --rm --detach ^
-  --network jenkins --env DOCKER_HOST=tcp://docker:2376 ^
-  --env DOCKER_CERT_PATH=/certs/client --env DOCKER_TLS_VERIFY=1 ^
-  --volume jenkins-data:/var/jenkins_home ^
-  --volume jenkins-docker-certs:/certs/client:ro ^
-  --publish 8080:8080 --publish 50000:50000 myjenkins-blueocean:1.1
+				stage("Owasp Dependency Check"){
+					agent {
+						docker {
+							//
+							image "openjdk:17-alpine"
+						}
+					}
+					steps {
+							sh 'echo ${JAVA_HOME}'
+							dependencyCheck additionalArguments: '--format HTML --format XML', odcInstallation: 'Default'
 
-curl http://mirrors.estointernet.in/apache/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.tar.gz --output apache-maven-3.6.3-bin.tar.gz
+							dependencyCheckPublisher pattern: 'dependency-check-report.xml'
+					}
+				}
 
-/var/jenkins_home/apache-maven-3.6.3
+			}
 
-admin password: 526c8b508f0d4e29be862f1e57b8f7f6
+		}
+
+		stage('Publish NUnit Test Report')
+		{
+			steps
+				{
+
+					//sh 'ls hacmii.UnitTests/TestResults'
+					nunit testResultsPattern: 'hacmii.UnitTests/TestResults/TestResults.xml'
+
+				}
+		}
+
+
+
+		stage('Publish'){
+			steps{
+				sh 'dotnet publish hacmii/hacmii.csproj --configuration Release --no-restore'
+             }
+        }
+
+		stage('Deploy'){
+
+			agent none
+
+			steps{
+				sh '/usr/local/bin/docker-compose -f ./hacmii/docker-compose.yml down'
+				sh '/usr/local/bin/docker-compose -f ./hacmii/docker-compose.yml build'
+				sh '/usr/local/bin/docker-compose -f ./hacmii/docker-compose.yml up -d'
+             }
+		}
+	}
+
+
+}
