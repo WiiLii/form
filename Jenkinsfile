@@ -10,7 +10,7 @@ pipeline {
 
 		stage('Source'){
 					steps{
-						checkout([$class: 'GitSCM', branches: [[name: '*/main']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[url: 'https://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@github.com/SIT-ICT3x03/Team28-AY21.git']]])
+						checkout([$class: 'GitSCM', branches: [[name: '*/main']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[url: 'https://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@github.com/WiiLii/simple-node-js-react-npm-app.git']]])
 					}
 				}
 
