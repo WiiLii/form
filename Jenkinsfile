@@ -1,6 +1,6 @@
 pipeline {
 	agent {
-		docker {
+		any {
 			image "mcr.microsoft.com/dotnet/sdk:5.0"
 			args "--volume /var/run/docker.sock:/var/run/docker.sock"
 		}
